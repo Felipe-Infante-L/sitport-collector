@@ -1,0 +1,4 @@
+probe-result.json
+.env
+.env.*
+node_modules/
