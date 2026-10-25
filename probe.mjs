@@ -29,3 +29,22 @@ console.log(JSON.stringify(result,null,2));
 await writeFile('probe-result.json',JSON.stringify(result,null,2));
 if(process.env.GITHUB_STEP_SUMMARY)await appendFile(process.env.GITHUB_STEP_SUMMARY,'## SITPORT connectivity\n\n'+result.successful+'/8 sources responded correctly.\n\n| Source | OK | HTTP/error |\n|---|---|---|\n'+results.map(r=>'| '+r.source+' | '+r.ok+' | '+(r.http_status??r.code??r.error)+' |').join('\n')+'\n');
 if(result.successful!==8)process.exitCode=1;
+
+if(result.successful!==8){
+ const {lookup}=await import('node:dns/promises');
+ const {request}=await import('node:https');
+ const diagnostics=await Promise.all(['https://github.com/','https://orion.directemar.cl/sitport/back/users/avisos','https://sitport.directemar.cl/api/meteo/pronosticos/'].map(async url=>{
+  const host=new URL(url).hostname;
+  const dns=await lookup(host,{all:true}).catch(e=>({error:e.code}));
+  const transport=await new Promise(resolve=>{
+   const start=performance.now();
+   const req=request(url,{family:4,headers:{Accept:'application/json','User-Agent':'Mozilla/5.0',Origin:'https://sitport.directemar.cl',Referer:'https://sitport.directemar.cl/'}},res=>{res.resume();resolve({http_status:res.statusCode,duration_ms:Math.round(performance.now()-start)});});
+   const timeout=setTimeout(()=>req.destroy(Object.assign(Error('HTTPS IPv4 timeout'),{code:'TIMEOUT'})),15000);
+   req.on('error',e=>resolve({error:e.code??e.message,duration_ms:Math.round(performance.now()-start)}));
+   req.on('close',()=>clearTimeout(timeout));req.end();
+  });
+  return {host,dns,ipv4_https:transport};
+ }));
+ console.log('NETWORK_DIAGNOSTICS '+JSON.stringify(diagnostics));
+ if(process.env.GITHUB_STEP_SUMMARY)await appendFile(process.env.GITHUB_STEP_SUMMARY,'\nIPv4 HTTPS diagnostics:\n\n'+diagnostics.map(d=>'- '+d.host+': '+JSON.stringify(d.ipv4_https)).join('\n')+'\n');
+}
